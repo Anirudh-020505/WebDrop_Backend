@@ -21,11 +21,14 @@ class ConnectionManager:
 
     async def register(self, ws: WebSocket, name: str):
         self.active[ws] = name
+        print(f"[Join] {name} connected.")
         await self.broadcast_presence()
 
     def disconnect(self, ws: WebSocket):
         if ws in self.active:
+            name = self.active[ws]
             del self.active[ws]
+            print(f"[Disconnect] {name} disconnected.")
 
     async def broadcast_presence(self):
         payload = {"type": "presence", "clients": list(self.active.values())}
@@ -37,6 +40,10 @@ class ConnectionManager:
         sender_name = self.active.get(sender)
 
         if sender_name == recipient_name:
+            await sender.send_text(json.dumps({
+                "type": "error",
+                "message": "You cannot send a file to yourself."
+            }))
             print(f"[Warning] {sender_name} tried to send to themselves.")
             return
 
@@ -50,6 +57,10 @@ class ConnectionManager:
                 break
 
         if not found:
+            await sender.send_text(json.dumps({
+                "type": "error",
+                "message": f"User '{recipient_name}' not found or not connected."
+            }))
             print(f"[Error] Recipient '{recipient_name}' not found. Active users: {list(self.active.values())}")
 
     async def broadcast_message(self, sender: WebSocket, payload: dict):
@@ -84,4 +95,3 @@ async def websocket_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(ws)
         await manager.broadcast_presence()
-        print(f"[Disconnect] A client has disconnected. Remaining users: {list(manager.active.values())}")
