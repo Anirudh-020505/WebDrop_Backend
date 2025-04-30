@@ -4,7 +4,9 @@ import json
 from typing import Dict
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware,
+
+app.add_middleware(
+    CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
@@ -31,12 +33,24 @@ class ConnectionManager:
         for client in self.active:
             await client.send_text(data)
 
-    async def send_to(self, recipient_name: str, payload: dict):
+    async def send_to(self, sender: WebSocket, recipient_name: str, payload: dict):
+        sender_name = self.active.get(sender)
+
+        if sender_name == recipient_name:
+            print(f"[Warning] {sender_name} tried to send to themselves.")
+            return
+
         data = json.dumps(payload)
+        found = False
         for ws, name in self.active.items():
             if name == recipient_name:
                 await ws.send_text(data)
-                return
+                found = True
+                print(f"[Info] Message sent from {sender_name} to {recipient_name}")
+                break
+
+        if not found:
+            print(f"[Error] Recipient '{recipient_name}' not found. Active users: {list(self.active.values())}")
 
     async def broadcast_message(self, sender: WebSocket, payload: dict):
         data = json.dumps(payload)
@@ -54,18 +68,20 @@ async def websocket_endpoint(ws: WebSocket):
         if join.get("type") != "join" or "name" not in join:
             await ws.close(code=1003)
             return
+
         await manager.register(ws, join["name"])
+
         while True:
             msg = json.loads(await ws.receive_text())
-            t = msg.get("type")
-            if t == "file_request":
-                await manager.send_to(msg["to"], msg)
-            elif t == "file_response":
-                await manager.send_to(msg["to"], msg)
-            elif t == "file_chunk":
-                await manager.send_to(msg["to"], msg)
-            elif t == "chat":
+            msg_type = msg.get("type")
+
+            if msg_type in {"file_request", "file_response", "file_chunk"}:
+                await manager.send_to(ws, msg["to"], msg)
+
+            elif msg_type == "chat":
                 await manager.broadcast_message(ws, msg)
+
     except WebSocketDisconnect:
         manager.disconnect(ws)
         await manager.broadcast_presence()
+        print(f"[Disconnect] A client has disconnected. Remaining users: {list(manager.active.values())}")
